@@ -25,7 +25,7 @@ InputStream {
 
 	}
 	croak { arg msg;
-		format("Error: % (pos: %).", msg, pos).postln;
+		Error(format("RhythmCompiler error: % (pos: %).", msg, pos)).throw;
 	}
 }
 
@@ -273,20 +273,20 @@ Parser {
 
 }
 
-Compiler {
+Compile {
 	var <result;
-	*new { arg inputString, fn;
-		^super.new.init(inputString, fn)
+	// returns a routine from input string 
+	*new { arg inputString, repeats = inf, fn;
+		^super.new.init(inputString, repeats, fn)
 	}
 
-	init { arg inputString, fn;
-		{
-			result = this.processNode(Parser(inputString).tree).flat;
-			fn.value(this);
-		}.fork;
+	init { arg inputString, repeats, fn;
+		result = this.processNode(Parser(inputString).tree).flat;
+		^this.asStream(repeats, fn)
 	}
 
-	embedNode { arg node;
+	embedNode { arg node, fn;
+		node.putAll(fn.value(node.val));
 		node.value.embedInStream;
 	}
 
@@ -309,15 +309,15 @@ Compiler {
 	}
 
 	processRest { arg rest;
-		^(length: rest.val, val: nil)
+		^(dur: rest.val, val: nil)
 	
 	}
 	
 	processNote { arg note;
 		var name = note.val[0].asSymbol;
-		var length = "" ++ note.val[1..]; 
-		// ^(length: length.asFloat, val: name)
-		^(length: length.asFloat, val: name)
+		var dur = "" ++ note.val[1..]; 
+		// ^(dur: dur.asFloat, val: name)
+		^(dur: dur.asFloat, val: name)
 	}
 
 	processNum { arg num;
@@ -340,29 +340,29 @@ Compiler {
 	}
 
 	padTo { arg left, right;
-		var total = left.collect(_.length).sum;
+		var total = left.collect(_.dur).sum;
 		var remainder = total % right;
-		left = left.add((length: right - remainder, val: nil));
+		left = left.add((dur: right - remainder, val: nil));
 		^left
 	}
 
 	truncate { arg left, right;
-		var total = left.collect(_.length).sum;
+		var total = left.collect(_.dur).sum;
 		var remainder = total % right;
 		var index = left.size - 1;
 		var item;
 
 		if (total <= right) {
-			left = left.add((length: right - remainder, val: nil))			
+			left = left.add((dur: right - remainder, val: nil))			
 		} {
 			while( { (remainder > 0) && (index > 0) }, {
 				item = left[index];
-				if ( remainder < item.length ) {
-						item.length = item.length - remainder;
+				if ( remainder < item.dur ) {
+						item.dur = item.dur - remainder;
 						remainder = 0;
-					} { remainder >= item.length } {
+					} { remainder >= item.dur } {
 						left.removeAt(index);
-						remainder = remainder - item.length;
+						remainder = remainder - item.dur;
 					}; 
 				index = index - 1
 			});			
@@ -375,11 +375,15 @@ Compiler {
 	}
 
 	multiply { arg left, right;
-		^left.collect({ arg item; item.length = item.length * right });
+		^left.collect({ arg item; item.dur = item.dur * right });
 	}
 
 	divide { arg left, right;
-		^left.collect({ arg item; item.length = item.length / right });
+		if (right == 0) {
+			^Error("division by zero error").throw
+		} {
+			^left.collect({ arg item; item.dur = item.dur / right });	
+		}
 	}
 
 	processUnOp { arg unop;
@@ -402,11 +406,11 @@ Compiler {
 		}
 	}
 
-	asStream { arg repeats = inf;
+	asStream { arg repeats = inf, fn;
 		^Routine {
 			repeats.do {
 				result.do({ arg node;
-					this.embedNode(node);
+					this.embedNode(node, fn);
 				});
 			}
 		}
