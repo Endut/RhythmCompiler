@@ -34,3 +34,8 @@ dashes: `"-- -- -- x-"` this is 3 rests then a beat
 
 #### unary operators:
 * `:` scrambles the lhs and embeds it in the routine (it will scramble it again each time if repeated)
+
+
+I recommend to use myLib for useful extensions to the Symbol class, and for using modules with Import  
+* [myLib](https://github.com/Endut/myLib)
+* [example modules](https://github.com/Endut/_modules)
