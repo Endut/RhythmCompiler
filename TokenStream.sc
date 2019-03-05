@@ -34,7 +34,8 @@ TokenStream {
 	var current;
 	var alpha_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 	var punctuation = "[]";
-	var binop = "%!*/|";
+	var binop = "%!*/|?";
+	var unop = ":";
 	var digit = "0123456789";
 	var input;
 
@@ -79,6 +80,10 @@ TokenStream {
 		^(type: 'binop', val: input.next, left: nil, right: nil)
 	}
 
+	readUnOp {
+		^(type: 'unop', val: input.next, left: nil)
+	}
+
 	readNumber {
 		var numberString = this.readWhile({ arg ch; (digit++".").contains(ch)});
 
@@ -91,7 +96,8 @@ TokenStream {
 			{ ch == "-" } { this.readRest }
 			{ punctuation.contains(ch) } { this.readPunctuation }
 			{ binop.contains(ch) } { this.readBinOp }
-			{ digit.contains(ch) } { this.readNumber };
+			{ digit.contains(ch) } { this.readNumber }
+			{ unop.contains(ch) } { this.readUnOp };
 
 		res ?? { this.croak(format("unrecognized character %", ch)) }
 		^res;
@@ -101,8 +107,6 @@ TokenStream {
 		var ch;
 		this.readWhile({ arg c; " \t\n".contains(c) });
 		ch = input.peek;
-		// ch.postln;
-		// input.eof.postln;
 		if(input.eof) {
 			^nil
 		} {
@@ -185,6 +189,7 @@ Parser {
 			'note', { this.parseNote(token) },
 			'punc', { this.parsePunc(token) },
 			'binop', { this.parseBinOp(token) },
+			'unop', { this.parseUnOp(token) },
  			'num', { this.parseNum(token) }
 		);
 	}
@@ -225,7 +230,7 @@ Parser {
 			};
 		
 		token.right = right;
-		if (left.type == 'note' || left.type == 'rest' ) {
+		if ( (left.type == 'note') || (left.type == 'rest' ) ) {
 			var tr;
 			left = tree;
 			token.left = left;
@@ -236,6 +241,23 @@ Parser {
 			tree.val[lastIndex] = token;
 		};
 		
+	}
+
+	parseUnOp { arg token;
+		var left;
+		var lastIndex = tree.val.size - 1;
+		left = tree.val[lastIndex];
+
+		if ( (left.type == 'note') || (left.type == 'rest') ) {
+			var tr;
+			left = tree;
+			token.left = left;
+			tr = (type: 'tree', val: [token]);
+			tree = tr;
+		} {
+			token.left = left;
+			tree.val[lastIndex] = token;
+		};
 	}
 
 	parseNum { arg token;
@@ -253,7 +275,6 @@ Parser {
 
 Compiler {
 	var <result;
-	var <routine;
 	*new { arg inputString, fn;
 		^super.new.init(inputString, fn)
 	}
@@ -261,18 +282,18 @@ Compiler {
 	init { arg inputString, fn;
 		{
 			result = this.processNode(Parser(inputString).tree).flat;
-			routine = Routine {
-				inf.do {
-					result.do(_.yield)
-				}
-			};
-			fn.value(result);
+			fn.value(this);
 		}.fork;
+	}
+
+	embedNode { arg node;
+		node.value.embedInStream;
 	}
 
 	processNode { arg node; 
 		var res = switch(node.type,
 			'binop', { this.processBinOp(node) },
+			'unop', { this.processUnOp(node) },
 			'num', { this.processNum(node) },
 			'tree', { this.processTree(node) },
 			'note', { this.processNote(node) },
@@ -308,7 +329,6 @@ Compiler {
 		var right = this.processNum(binop.right);
 		var val = "" ++ binop.val;
 		var res;
-		left.postln;
 		res = switch(val, 
 			"%", { this.padTo(left, right)},
 			"!", { this.duplicate(left, right)},
@@ -331,9 +351,6 @@ Compiler {
 		var remainder = total % right;
 		var index = left.size - 1;
 		var item;
-
-		left.postln;
-		right.postln;
 
 		if (total <= right) {
 			left = left.add((length: right - remainder, val: nil))			
@@ -363,5 +380,35 @@ Compiler {
 
 	divide { arg left, right;
 		^left.collect({ arg item; item.length = item.length / right });
+	}
+
+	processUnOp { arg unop;
+		var left = Array.newFrom(this.processNode(unop.left)).flat;
+		var val = "" ++ unop.val;
+		var res;
+
+		res = switch(val,
+			":", { this.scramble(left) });
+		^res
+	}
+
+	scramble { arg left;
+		^{
+			Routine {
+				left.scramble.do({ arg node;
+					this.embedNode(node)
+				});
+			}
+		}
+	}
+
+	asStream { arg repeats = inf;
+		^Routine {
+			repeats.do {
+				result.do({ arg node;
+					this.embedNode(node);
+				});
+			}
+		}
 	}
 }
