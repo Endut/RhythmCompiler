@@ -10,7 +10,7 @@ c = Compile("x--s--x-", repeats: inf, lookup: d);
 Pbindf(c, \instrument, \sampleSynth).trace.play;
 ```
 
-Compile's fn arg is used to map the alphabetical tokens in the rhythm string you want to compile to events  
+Compile's lookup arg is used to map the alphabetical tokens in the rhythm string you want to compile to events  
 for example you might want to use a sample player that has a 'buf' argument, so you can   gather some different events with the buffers into a kind of 'drum machine' dictionary d, and look them up in it.  
 Compile returns a Routine that yields events so you can easily plug it into a pbind, or use it inside a Task or other Routine.
 
