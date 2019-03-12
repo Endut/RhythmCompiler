@@ -3,8 +3,9 @@ d = Dictionary.with(*[
 	\x -> (buf: "buffer x"),
 	\s -> (buf: "buffer s")
 	]);
+// using a dictionary for lookups here but currentEnvironment is used by default
 
-c = Compile("x--s--x-", repeats: inf, fn: _.lookupIn(d));
+c = Compile("x--s--x-", repeats: inf, lookup: d);
 
 Pbindf(c, \instrument, \sampleSynth).trace.play;
 ```
