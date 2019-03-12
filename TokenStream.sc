@@ -275,18 +275,23 @@ Parser {
 
 Compile {
 	var <result;
+	var <>lookupDict;
+	var <>tickValue;
 	// returns a routine from input string 
-	*new { arg inputString, repeats = inf, fn;
-		^super.new.init(inputString, repeats, fn)
+	*new { arg inputString, repeats = inf, lookup = currentEnvironment, tick = 1;
+		// these defaults are useful
+		^super.new.init(inputString, repeats, lookup, tick)
 	}
 
-	init { arg inputString, repeats, fn;
+	init { arg inputString, repeats, lookup, tick;
+		lookupDict = lookup ? ();
+		tickValue = tick;
 		result = this.processNode(Parser(inputString).tree).flat;
-		^this.asStream(repeats, fn)
+		^this.asStream(repeats)
 	}
 
-	embedNode { arg node, fn;
-		node.putAll(fn.value(node.val));
+	embedNode { arg node;
+		{ node.putAll(node.val.lookupIn(lookupDict)) }.try;
 		node.value.embedInStream;
 	}
 
@@ -309,7 +314,7 @@ Compile {
 	}
 
 	processRest { arg rest;
-		^(dur: rest.val, val: nil)
+		^(dur: rest.val * tickValue, val: nil, type: 'rest')
 	
 	}
 	
@@ -317,7 +322,7 @@ Compile {
 		var name = note.val[0].asSymbol;
 		var dur = "" ++ note.val[1..]; 
 		// ^(dur: dur.asFloat, val: name)
-		^(dur: dur.asFloat, val: name)
+		^(dur: dur.asFloat * tickValue, val: name, type: 'note')
 	}
 
 	processNum { arg num;
