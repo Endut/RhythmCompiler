@@ -274,30 +274,6 @@ Parser {
 
 }
 
-ScrambleRoutine {
-	var <array;
-	var <>dur;
-	var <type = 'scramble';
-
-	*new { arg array;
-		^super.new.init(array)
-	}
-
-	init { arg arr;
-		array = arr;
-		dur = array.collect(_.dur).sum;
-	}
-
-	embedInStream {
-		^Routine { arg inval;
-			var timeLeft;
-			array.scramble.do { arg item;
-				inval = item.embedInStream;
-			}
-		}
-	}
-}
-
 Compile {
 	var lookupDict;
 	var tickValue;
@@ -364,66 +340,9 @@ Compile {
 		^res
 	}
 
-	processUnOp { arg unop;
-		var left = this.processNode(unop.left).flat;
-		var val = "" ++ unop.val;
-		var res;
-
-		res = switch(val,
-			":", { this.scramble(left) });
-		^res
-	}
-
-	scramble { arg left;
-		var total = left.collect(_.dur).sum;
-		^(
-			type: 'scrambledTree',
-			dur: total,
-			val: left,
-			embedInStream: { arg ev, inEvent;
-				var routine = Routine { arg inval;
-					var timeLeft = ev.dur;
-					ev.val.scramble.do { arg item;
-
-						if ( timeLeft >= ev.dur ) {
-							inval = item.embedInStream;
-							} {
-								item.dur = timeLeft;
-								inval = item.embedInStream;
-							};
-					}
-				};
-				routine.embedInStream(inEvent);
-			}
-		)
-	}
-	
-	processNote { arg node;
-		var name = node.val[0].asSymbol;
-		var dur = "" ++ node.val[1..]; 
-		var lookup = lookupDict;
-		^(dur: dur.asFloat * tickValue, val: name, type: 'note',
-			embedInStream: { arg ev, inEvent;
-				var event = (dur: ev.dur, val: ev.val, type: ev.type);
-				event.putAll(name.lookupIn(lookup));
-				event.embedInStream(inEvent)
-				});
-
-	}
-
-	processRest { arg node;
-		^(dur: node.val * tickValue, val: nil, type: 'rest',
-			embedInStream: { arg ev, inEvent;
-				(dur: ev.dur, val: ev.val, type: ev.type).embedInStream(inEvent)
-				})	
-	}
-
-	processNum { arg node;
-		^node.val
-	}
-
 	// methods that transform the lhs of a binop
 
+	// %
 	padTo { arg left, right;
 		var total = left.collect(_.dur).sum;
 		var remainder = total % right;
@@ -431,9 +350,8 @@ Compile {
 		^left
 	}
 
+	// |
 	truncate { arg left, right;
-		// much trickier when you consider scrambled non-deterministic
-		// sections
 		var total = left.collect(_.dur).sum;
 		var remainder = total % right;
 		var index = left.size - 1;
@@ -458,17 +376,19 @@ Compile {
 		^left
 	}
 
-
+	// !
 	duplicate { arg left, right;
 		^left.dup(right)
 	}
 
+	// *
 	multiply { arg left, right;
 		^left.collect({ arg item;
 			this.multiplyItem(item, right);
 		});
 	}
 
+	// /
 	divide { arg left, right;
 		if (right == 0) {
 			^Error("division by zero error").throw
@@ -487,4 +407,67 @@ Compile {
 			};
 		^item
 	}
+
+	processUnOp { arg unop;
+		var left = this.processNode(unop.left).flat;
+		var val = "" ++ unop.val;
+		var res;
+
+		res = switch(val,
+			":", { this.scramble(left) });
+		^res
+	}
+
+	// methods that process lhs of unary op
+
+	// :
+	scramble { arg left;
+		var total = left.collect(_.dur).sum;
+		^(
+			type: 'scrambledTree',
+			dur: total,
+			val: left,
+			embedInStream: { arg ev, inEvent;
+				var routine = Routine { arg inval;
+					var timeLeft = ev.dur;
+					ev.val.scramble.do { arg item;
+
+						if ( timeLeft >= ev.dur ) {
+							inval = item.embedInStream;
+							} {
+								item.dur = timeLeft;
+								inval = item.embedInStream;
+							};
+					}
+				};
+				routine.embedInStream(inEvent);
+			}
+		)
+	}
+	
+	// ---------------------------------------------------------------------
+	processNote { arg node;
+		var name = node.val[0].asSymbol;
+		var dur = "" ++ node.val[1..]; 
+		var lookup = lookupDict;
+		^(dur: dur.asFloat * tickValue, val: name, type: 'note',
+			embedInStream: { arg ev, inEvent;
+				var event = (dur: ev.dur, val: ev.val, type: ev.type);
+				// rest can remain 'static'
+				// useful to override embedInStream for notes because
+				// lookup dict / environment can change after compilation
+				event.putAll(name.lookupIn(lookup));
+				event.embedInStream(inEvent)
+				});
+
+	}
+
+	processRest { arg node;
+		^(dur: node.val * tickValue, val: nil, type: 'rest')	
+	}
+
+	processNum { arg node;
+		^node.val
+	}
+
 }
