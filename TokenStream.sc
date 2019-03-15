@@ -163,7 +163,8 @@ Parser {
 		input = TokenStream(inputString);
 		tree = (type: 'tree', val: []);
 		continue = true;
-		^this.fillTree;
+		this.fillTree;
+		^tree
 	}
 
 	initFromTokenStream { arg inputStream, parentNode;
@@ -273,10 +274,35 @@ Parser {
 
 }
 
+ScrambleRoutine {
+	var <array;
+	var <>dur;
+	var <type = 'scramble';
+
+	*new { arg array;
+		^super.new.init(array)
+	}
+
+	init { arg arr;
+		array = arr;
+		dur = array.collect(_.dur).sum;
+	}
+
+	embedInStream {
+		^Routine { arg inval;
+			var timeLeft;
+			array.scramble.do { arg item;
+				inval = item.embedInStream;
+			}
+		}
+	}
+}
+
 Compile {
-	var <result;
-	var <>lookupDict;
-	var <>tickValue;
+	var lookupDict;
+	var tickValue;
+	var result;
+
 	// returns a routine from input string 
 	*new { arg inputString, repeats = inf, lookup = currentEnvironment, tick = 1;
 		// these defaults are useful
@@ -284,65 +310,119 @@ Compile {
 	}
 
 	init { arg inputString, repeats, lookup, tick;
+		var tree;
 		lookupDict = lookup ? ();
 		tickValue = tick;
-		result = this.processNode(Parser(inputString).tree).flat;
-		^this.asStream(repeats)
+		tree = Parser(inputString);
+
+		result = this.processNode(tree).flat;
+		// result should be a (flat) array of functions that return embeddable objects
+
+		^Routine { arg inval;
+			repeats.do {
+				result.do { arg item;
+					// embedNode must eventually return <Routine or Event>.embedInStream or <Object>.yield
+					inval = item.embedInStream;		
+				}
+			}
+		}
 	}
 
-	embedNode { arg node;
-		{ node.putAll(node.val.lookupIn(lookupDict)) }.try;
-		node.value.embedInStream;
-	}
-
-	processNode { arg node; 
+	processNode { arg node;
 		var res = switch(node.type,
+			'tree',  { this.processTree(node)  },
 			'binop', { this.processBinOp(node) },
-			'unop', { this.processUnOp(node) },
-			'num', { this.processNum(node) },
-			'tree', { this.processTree(node) },
-			'note', { this.processNote(node) },
-			'rest', { this.processRest(node) }
+			'unop',  { this.processUnOp(node)  },
+			'note',  { this.processNote(node)  },
+			'rest',  { this.processRest(node)  },
+			'num',   { this.processNum(node)   }
 			);
-		^res;
+		^res
 	}
 
-	processTree { arg tree;
-		^tree.val.collect({ arg item, i;
+	processTree { arg node;
+		^node.val.collect({ arg item, i;
 			this.processNode(item);
 			})
 	}
 
-	processRest { arg rest;
-		^(dur: rest.val * tickValue, val: nil, type: 'rest')
-	
-	}
-	
-	processNote { arg note;
-		var name = note.val[0].asSymbol;
-		var dur = "" ++ note.val[1..]; 
-		// ^(dur: dur.asFloat, val: name)
-		^(dur: dur.asFloat * tickValue, val: name, type: 'note')
-	}
-
-	processNum { arg num;
-		^num.val
-	}
-
 	processBinOp { arg binop;
-		var left = Array.newFrom(this.processNode(binop.left)).flat;
-		var right = this.processNum(binop.right);
-		var val = "" ++ binop.val;
-		var res;
+		var left, right, res, val;
+		
+		left = this.processNode(binop.left).flat;
+		// right should always be a number, otherwise parser will have croaked an error
+		right = this.processNum(binop.right);		
+		val = "" ++ binop.val;
+		
 		res = switch(val, 
-			"%", { this.padTo(left, right)},
-			"!", { this.duplicate(left, right)},
-			"*", { this.multiply(left, right)},
-			"/", { this.divide(left, right)},
-			"|", { this.truncate(left, right)}
+			"%", { this.padTo(left, right)     },
+			"!", { this.duplicate(left, right) },
+			"*", { this.multiply(left, right)  },
+			"/", { this.divide(left, right)    },
+			"|", { this.truncate(left, right)  }
 			);
 		^res
 	}
+
+	processUnOp { arg unop;
+		var left = this.processNode(unop.left).flat;
+		var val = "" ++ unop.val;
+		var res;
+
+		res = switch(val,
+			":", { this.scramble(left) });
+		^res
+	}
+
+	scramble { arg left;
+		var total = left.collect(_.dur).sum;
+		^(
+			type: 'scrambledTree',
+			dur: total,
+			val: left,
+			embedInStream: { arg ev, inEvent;
+				var routine = Routine { arg inval;
+					var timeLeft = ev.dur;
+					ev.val.scramble.do { arg item;
+
+						if ( timeLeft >= ev.dur ) {
+							inval = item.embedInStream;
+							} {
+								item.dur = timeLeft;
+								inval = item.embedInStream;
+							};
+					}
+				};
+				routine.embedInStream(inEvent);
+			}
+		)
+	}
+	
+	processNote { arg node;
+		var name = node.val[0].asSymbol;
+		var dur = "" ++ node.val[1..]; 
+		var lookup = lookupDict;
+		^(dur: dur.asFloat * tickValue, val: name, type: 'note',
+			embedInStream: { arg ev, inEvent;
+				var event = (dur: ev.dur, val: ev.val, type: ev.type);
+				event.putAll(name.lookupIn(lookup));
+				event.embedInStream(inEvent)
+				});
+
+	}
+
+	processRest { arg node;
+		^(dur: node.val * tickValue, val: nil, type: 'rest',
+			embedInStream: { arg ev, inEvent;
+				(dur: ev.dur, val: ev.val, type: ev.type).embedInStream(inEvent)
+				})	
+	}
+
+	processNum { arg node;
+		^node.val
+	}
+
+	// methods that transform the lhs of a binop
 
 	padTo { arg left, right;
 		var total = left.collect(_.dur).sum;
@@ -352,6 +432,8 @@ Compile {
 	}
 
 	truncate { arg left, right;
+		// much trickier when you consider scrambled non-deterministic
+		// sections
 		var total = left.collect(_.dur).sum;
 		var remainder = total % right;
 		var index = left.size - 1;
@@ -363,6 +445,7 @@ Compile {
 			while( { (remainder > 0) && (index > 0) }, {
 				item = left[index];
 				if ( remainder < item.dur ) {
+						// item.dur = item.dur - remainder;
 						item.dur = item.dur - remainder;
 						remainder = 0;
 					} { remainder >= item.dur } {
@@ -375,49 +458,33 @@ Compile {
 		^left
 	}
 
+
 	duplicate { arg left, right;
 		^left.dup(right)
 	}
 
 	multiply { arg left, right;
-		^left.collect({ arg item; item.dur = item.dur * right });
+		^left.collect({ arg item;
+			this.multiplyItem(item, right);
+		});
 	}
 
 	divide { arg left, right;
 		if (right == 0) {
 			^Error("division by zero error").throw
 		} {
-			^left.collect({ arg item; item.dur = item.dur / right });	
+			^this.multiply(left, right.reciprocal)	
 		}
 	}
 
-	processUnOp { arg unop;
-		var left = Array.newFrom(this.processNode(unop.left)).flat;
-		var val = "" ++ unop.val;
-		var res;
-
-		res = switch(val,
-			":", { this.scramble(left) });
-		^res
-	}
-
-	scramble { arg left;
-		^{
-			Routine {
-				left.scramble.do({ arg node;
-					this.embedNode(node)
-				});
-			}
-		}
-	}
-
-	asStream { arg repeats = inf, fn;
-		^Routine {
-			repeats.do {
-				result.do({ arg node;
-					this.embedNode(node, fn);
-				});
-			}
-		}
+	multiplyItem { arg item, right;
+		case
+			{ ['note', 'rest'].includes(item.type) } { item.dur = item.dur * right }
+			// { item.type == 'tree' } { /* item.dur = item.dur - remainder */ }
+			{ item.type == 'scrambledTree' } {
+				var array = item.val.collect({ arg it; it.dur = it.dur * right });
+				item.val = array;
+			};
+		^item
 	}
 }
