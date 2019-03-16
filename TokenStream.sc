@@ -292,6 +292,7 @@ Compile {
 		tree = Parser(inputString);
 
 		result = this.processNode(tree).flat;
+		result.postln;
 		// result should be a (flat) array of functions that return embeddable objects
 
 		^Routine { arg inval;
@@ -319,23 +320,27 @@ Compile {
 	processTree { arg node;
 		^node.val.collect({ arg item, i;
 			this.processNode(item);
-			})
+			});
 	}
 
 	processBinOp { arg binop;
 		var left, right, res, val;
 		
-		left = this.processNode(binop.left).flat;
+		left = this.processNode(binop.left);
 		// right should always be a number, otherwise parser will have croaked an error
 		right = this.processNum(binop.right);		
 		val = "" ++ binop.val;
-		
+			
 		res = switch(val, 
-			"%", { this.padTo(left, right)     },
-			"!", { this.duplicate(left, right) },
-			"*", { this.multiply(left, right)  },
-			"/", { this.divide(left, right)    },
-			"|", { this.truncate(left, right)  }
+			/* the following binops can have a flat lhs */
+			"%", { this.padTo(left.flat, right)     },
+			"!", { this.duplicate(left.flat, right) },
+			"*", { this.multiply(left.flat, right)  },
+			"/", { this.divide(left.flat, right)    },
+			"|", { this.truncate(left.flat, right)  }
+			/* if you define any binops that shuffle the order of nodes
+			 * in lhs then lhs shouldn't be flattened
+			 */
 			);
 		^res
 	}
@@ -366,7 +371,7 @@ Compile {
 						// item.dur = item.dur - remainder;
 						item.dur = item.dur - remainder;
 						remainder = 0;
-					} { remainder >= item.dur } {
+					} {
 						left.removeAt(index);
 						remainder = remainder - item.dur;
 					}; 
@@ -383,9 +388,7 @@ Compile {
 
 	// *
 	multiply { arg left, right;
-		^left.collect({ arg item;
-			this.multiplyItem(item, right);
-		});
+		^left.collect(_.multiplyBy(right));
 	}
 
 	// /
@@ -397,19 +400,8 @@ Compile {
 		}
 	}
 
-	multiplyItem { arg item, right;
-		case
-			{ ['note', 'rest'].includes(item.type) } { item.dur = item.dur * right }
-			// { item.type == 'tree' } { /* item.dur = item.dur - remainder */ }
-			{ item.type == 'scrambledTree' } {
-				var array = item.val.collect({ arg it; it.dur = it.dur * right });
-				item.val = array;
-			};
-		^item
-	}
-
 	processUnOp { arg unop;
-		var left = this.processNode(unop.left).flat;
+		var left = this.processNode(unop.left);
 		var val = "" ++ unop.val;
 		var res;
 
@@ -424,11 +416,21 @@ Compile {
 	scramble { arg left;
 		var total = left.collect(_.dur).sum;
 		^(
-			type: 'scrambledTree',
+			type: 'tree',
 			dur: total,
 			val: left,
+			multiplyBy: { arg ev, multiplier;
+				var newTotal = 0;
+				ev.val = ev.val.collect({ arg item;
+					item.multiplyBy(multiplier);
+					newTotal = newTotal + item.dur;
+					item;
+					});
+				ev.dur = newTotal;
+				ev;
+			},
 			embedInStream: { arg ev, inEvent;
-				var routine = Routine { arg inval;
+				Routine({ arg inval;
 					var timeLeft = ev.dur;
 					ev.val.scramble.do { arg item;
 
@@ -439,8 +441,7 @@ Compile {
 								inval = item.embedInStream;
 							};
 					}
-				};
-				routine.embedInStream(inEvent);
+				}).embedInStream(inEvent);
 			}
 		)
 	}
@@ -451,6 +452,7 @@ Compile {
 		var dur = "" ++ node.val[1..]; 
 		var lookup = lookupDict;
 		^(dur: dur.asFloat * tickValue, val: name, type: 'note',
+			multiplyBy: { arg ev, multiplier; ev.dur = ev.dur * multiplier; ev; },
 			embedInStream: { arg ev, inEvent;
 				var event = (dur: ev.dur, val: ev.val, type: ev.type);
 				// rest can remain 'static'
@@ -463,7 +465,12 @@ Compile {
 	}
 
 	processRest { arg node;
-		^(dur: node.val * tickValue, val: nil, type: 'rest')	
+		^(dur: node.val * tickValue, val: nil, type: 'rest',
+			multiplyBy: { arg ev, multiplier; ev.dur = ev.dur * multiplier; ev; },
+			embedInStream: { arg ev, inEvent;
+				(dur: ev.dur, type: 'rest').embedInStream(inEvent)
+				}
+		)	
 	}
 
 	processNum { arg node;
