@@ -299,7 +299,7 @@ Compile {
 			repeats.do {
 				result.do { arg item;
 					// embedNode must eventually return <Routine or Event>.embedInStream or <Object>.yield
-					inval = item.embedInStream;		
+					inval = item.embedInStream(inval);		
 				}
 			}
 		}
@@ -435,10 +435,10 @@ Compile {
 					ev.val.scramble.do { arg item;
 
 						if ( timeLeft >= ev.dur ) {
-							inval = item.embedInStream;
+							inval = item.embedInStream(inval);
 							} {
 								item.dur = timeLeft;
-								inval = item.embedInStream;
+								inval = item.embedInStream(inval);
 							};
 					}
 				}).embedInStream(inEvent);
